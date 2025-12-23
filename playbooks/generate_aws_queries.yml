@@ -1,0 +1,20 @@
+---
+- name: Generate audit query file for AWS collection
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Generate query file for AWS collection
+      jonnyfiveiq.query_file_generator.generate_query_file:
+        collection_source: "https://github.com/ansible-collections/amazon.aws"
+        collection_name: "amazon.aws"
+        output_path: "./amazon_aws_event_query.yml"
+      register: result
+
+    - name: Display results
+      ansible.builtin.debug:
+        msg: |
+          Generated: {{ result.query_file_path }}
+          Modules analyzed: {{ result.modules_analyzed }}
+          Successfully parsed: {{ result.successful_parses | default('N/A') }}
+          Collection: {{ result.collection_info.name }}

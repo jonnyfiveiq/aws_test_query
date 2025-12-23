@@ -1,0 +1,200 @@
+---
+- name: Test AWS event queries with free-tier resources
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Override these via extra vars or AAP credentials
+    aws_access_key: "{{ aws_access_key_id | default(lookup('env', 'AWS_ACCESS_KEY_ID')) }}"
+    aws_secret_key: "{{ aws_secret_access_key | default(lookup('env', 'AWS_SECRET_ACCESS_KEY')) }}"
+    aws_session_token: "{{ aws_security_token | default(lookup('env', 'AWS_SESSION_TOKEN') | default(omit)) }}"
+    aws_region: "{{ aws_region | default('us-east-1') }}"
+    
+    # Test resource naming
+    test_prefix: "{{ resource_prefix | default('aap-indirect-test') }}"
+    
+    # Cleanup control
+    cleanup_resources: "{{ cleanup | default(true) | bool }}"
+
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ aws_access_key }}"
+    AWS_SECRET_ACCESS_KEY: "{{ aws_secret_key }}"
+    AWS_SESSION_TOKEN: "{{ aws_session_token | default(omit) }}"
+    AWS_REGION: "{{ aws_region }}"
+
+  tasks:
+    # =========================================================================
+    # VALIDATE CREDENTIALS
+    # =========================================================================
+
+    - name: Validate AWS credentials
+      amazon.aws.aws_caller_info:
+      register: caller_info
+
+    - name: Display account info
+      ansible.builtin.debug:
+        msg: "Running as: {{ caller_info.arn }} in account {{ caller_info.account }}"
+
+    # =========================================================================
+    # CREATE FREE-TIER TEST RESOURCES
+    # =========================================================================
+
+    - name: Generate unique suffix for resources
+      ansible.builtin.set_fact:
+        unique_suffix: "{{ 999999 | random | string }}"
+
+    - name: Create test S3 bucket
+      amazon.aws.s3_bucket:
+        name: "{{ test_prefix }}-bucket-{{ unique_suffix }}"
+        state: present
+        region: "{{ aws_region }}"
+      register: s3_bucket
+
+    - name: Create test SNS topic
+      amazon.aws.sns_topic:
+        name: "{{ test_prefix }}-topic-{{ unique_suffix }}"
+        state: present
+        region: "{{ aws_region }}"
+      register: sns_topic
+
+    - name: Create test SQS queue
+      amazon.aws.sqs_queue:
+        name: "{{ test_prefix }}-queue-{{ unique_suffix }}"
+        state: present
+        region: "{{ aws_region }}"
+      register: sqs_queue
+
+    - name: Create test IAM role
+      amazon.aws.iam_role:
+        name: "{{ test_prefix }}-role-{{ unique_suffix }}"
+        state: present
+        assume_role_policy_document: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Effect": "Allow",
+                "Principal": {"Service": "lambda.amazonaws.com"},
+                "Action": "sts:AssumeRole"
+              }
+            ]
+          }
+      register: iam_role
+
+    - name: Create test security group
+      amazon.aws.ec2_security_group:
+        name: "{{ test_prefix }}-sg-{{ unique_suffix }}"
+        description: "Test security group for AAP indirect node testing"
+        state: present
+        region: "{{ aws_region }}"
+      register: security_group
+
+    # =========================================================================
+    # QUERY RESOURCES (these generate indirect node audit events)
+    # =========================================================================
+
+    - name: Query S3 buckets
+      amazon.aws.s3_bucket_info:
+        region: "{{ aws_region }}"
+      register: s3_info
+
+    - name: Query SNS topics
+      amazon.aws.sns_topic_info:
+        region: "{{ aws_region }}"
+      register: sns_info
+
+    - name: Query SQS queues
+      amazon.aws.sqs_queue_info:
+        region: "{{ aws_region }}"
+      register: sqs_info
+
+    - name: Query IAM roles
+      amazon.aws.iam_role_info:
+        name: "{{ test_prefix }}-role-{{ unique_suffix }}"
+      register: iam_role_info
+
+    - name: Query security groups
+      amazon.aws.ec2_security_group_info:
+        region: "{{ aws_region }}"
+        filters:
+          group-name: "{{ test_prefix }}-sg-{{ unique_suffix }}"
+      register: sg_info
+
+    - name: Query regions (free - always works)
+      amazon.aws.aws_region_info:
+      register: region_info
+
+    # =========================================================================
+    # DISPLAY RESULTS
+    # =========================================================================
+
+    - name: Display test summary
+      ansible.builtin.debug:
+        msg: |
+          =====================================================
+          AWS FREE-TIER TEST RESULTS
+          =====================================================
+          
+          AWS ACCOUNT: {{ caller_info.account }}
+          AWS USER:    {{ caller_info.arn }}
+          REGION:      {{ aws_region }}
+          
+          RESOURCES CREATED:
+            S3 Bucket:       {{ s3_bucket.name | default('N/A') }}
+            SNS Topic:       {{ sns_topic.sns_arn | default('N/A') }}
+            SQS Queue:       {{ sqs_queue.queue_url | default('N/A') }}
+            IAM Role:        {{ iam_role.iam_role.arn | default('N/A') }}
+            Security Group:  {{ security_group.group_id | default('N/A') }}
+          
+          RESOURCES QUERIED (for indirect node counting):
+            S3 Buckets found:        {{ s3_info.buckets | length }}
+            SNS Topics found:        {{ sns_info.topics | default([]) | length }}
+            SQS Queues found:        {{ sqs_info.queues | default([]) | length }}
+            IAM Roles found:         {{ iam_role_info.iam_roles | length }}
+            Security Groups found:   {{ sg_info.security_groups | length }}
+            Regions available:       {{ region_info.regions | length }}
+          
+          CLEANUP: {{ 'Enabled' if cleanup_resources else 'Disabled' }}
+          =====================================================
+
+    # =========================================================================
+    # CLEANUP (controlled by cleanup_resources variable)
+    # =========================================================================
+
+    - name: Cleanup test resources
+      when: cleanup_resources | bool
+      block:
+        - name: Delete test security group
+          amazon.aws.ec2_security_group:
+            name: "{{ test_prefix }}-sg-{{ unique_suffix }}"
+            state: absent
+            region: "{{ aws_region }}"
+
+        - name: Delete test IAM role
+          amazon.aws.iam_role:
+            name: "{{ test_prefix }}-role-{{ unique_suffix }}"
+            state: absent
+
+        - name: Delete test SQS queue
+          amazon.aws.sqs_queue:
+            name: "{{ test_prefix }}-queue-{{ unique_suffix }}"
+            state: absent
+            region: "{{ aws_region }}"
+
+        - name: Delete test SNS topic
+          amazon.aws.sns_topic:
+            name: "{{ test_prefix }}-topic-{{ unique_suffix }}"
+            state: absent
+            region: "{{ aws_region }}"
+
+        - name: Delete test S3 bucket
+          amazon.aws.s3_bucket:
+            name: "{{ s3_bucket.name }}"
+            state: absent
+            force: true
+            region: "{{ aws_region }}"
+          when: s3_bucket.name is defined
+
+        - name: Display cleanup status
+          ansible.builtin.debug:
+            msg: "All test resources cleaned up successfully"
