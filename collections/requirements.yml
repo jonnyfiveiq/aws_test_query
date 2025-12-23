@@ -1,7 +1,6 @@
 ---
 collections:
-  - name: amazon.aws
-    source: https://github.com/jonnyfiveiq/amazon.aws
+  - name: https://github.com/jonnyfiveiq/amazon.aws.git
     type: git
-#    version: "7.6.0"
+    version: main
  
