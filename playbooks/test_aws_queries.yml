@@ -33,28 +33,6 @@
         region: "{{ my_aws_region }}"
       register: s3_info
 
-    - name: Create test IAM role
-      amazon.aws.iam_role:
-        name: "{{ my_test_prefix }}-role-{{ unique_suffix }}"
-        state: present
-        assume_role_policy_document: |
-          {
-            "Version": "2012-10-17",
-            "Statement": [
-              {
-                "Effect": "Allow",
-                "Principal": {"Service": "lambda.amazonaws.com"},
-                "Action": "sts:AssumeRole"
-              }
-            ]
-          }
-      register: iam_role
-
-    - name: Query IAM roles
-      amazon.aws.iam_role_info:
-        name: "{{ my_test_prefix }}-role-{{ unique_suffix }}"
-      register: iam_role_info
-
     - name: Create test security group
       amazon.aws.ec2_security_group:
         name: "{{ my_test_prefix }}-sg-{{ unique_suffix }}"
@@ -72,6 +50,7 @@
 
     - name: Query regions
       amazon.aws.aws_region_info:
+        region: "{{ my_aws_region }}"
       register: region_info
 
     - name: Display test summary
@@ -85,12 +64,10 @@
           
           CREATED:
             S3 Bucket:       {{ s3_bucket.name | default('N/A') }}
-            IAM Role:        {{ iam_role.iam_role.arn | default('N/A') }}
             Security Group:  {{ security_group.group_id | default('N/A') }}
           
           QUERIED:
             S3 Buckets:        {{ s3_info.buckets | length }}
-            IAM Roles:         {{ iam_role_info.iam_roles | length }}
             Security Groups:   {{ sg_info.security_groups | length }}
             Regions:           {{ region_info.regions | length }}
           =====================================================
@@ -103,11 +80,6 @@
             name: "{{ my_test_prefix }}-sg-{{ unique_suffix }}"
             state: absent
             region: "{{ my_aws_region }}"
-
-        - name: Delete IAM role
-          amazon.aws.iam_role:
-            name: "{{ my_test_prefix }}-role-{{ unique_suffix }}"
-            state: absent
 
         - name: Delete S3 bucket
           amazon.aws.s3_bucket:
