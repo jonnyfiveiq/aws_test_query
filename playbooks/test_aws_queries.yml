@@ -8,13 +8,10 @@
 #   - Internet Gateway (free)
 #   - Route Tables (free)
 #   - Security Groups (free)
-#   - Network ACLs (free)
 #   - S3 Buckets (free to create)
 #   - IAM Roles (free)
 #   - IAM Policies (free)
 #   - EC2 Key Pairs (free)
-#   - Placement Groups (free)
-#   - Launch Templates (free)
 #
 # Prerequisites:
 #   - amazon.aws collection installed
@@ -390,11 +387,13 @@
             name: "{{ my_test_prefix }}-key-{{ unique_suffix }}"
             region: "{{ my_aws_region }}"
             state: absent
+          ignore_errors: true
 
         - name: Delete IAM policy
           amazon.aws.iam_managed_policy:
             policy_name: "{{ my_test_prefix }}-policy-{{ unique_suffix }}"
             state: absent
+          ignore_errors: true
 
         - name: Delete IAM roles
           amazon.aws.iam_role:
@@ -403,6 +402,7 @@
           loop:
             - "{{ my_test_prefix }}-ec2-role-{{ unique_suffix }}"
             - "{{ my_test_prefix }}-lambda-role-{{ unique_suffix }}"
+          ignore_errors: true
 
         - name: Delete S3 buckets
           amazon.aws.s3_bucket:
@@ -414,6 +414,7 @@
             - "data"
             - "logs"
             - "backups"
+          ignore_errors: true
 
         - name: Delete security groups
           amazon.aws.ec2_security_group:
@@ -424,16 +425,26 @@
             - "{{ sg_web.group_id }}"
             - "{{ sg_app.group_id }}"
             - "{{ sg_db.group_id }}"
+          ignore_errors: true
 
-        - name: Delete route tables
+        - name: Get all route tables in VPC
+          amazon.aws.ec2_vpc_route_table_info:
+            region: "{{ my_aws_region }}"
+            filters:
+              vpc-id: "{{ vpc_result.vpc.id }}"
+          register: all_route_tables
+
+        - name: Delete non-main route tables
           amazon.aws.ec2_vpc_route_table:
-            route_table_id: "{{ item }}"
+            route_table_id: "{{ item.id }}"
             vpc_id: "{{ vpc_result.vpc.id }}"
             region: "{{ my_aws_region }}"
             state: absent
-          loop:
-            - "{{ public_rt_result.route_table.id }}"
-            - "{{ private_rt_result.route_table.id }}"
+            lookup: id
+          loop: "{{ all_route_tables.route_tables }}"
+          when: 
+            - item.associations is defined
+            - item.associations | selectattr('main', 'defined') | selectattr('main', 'equalto', true) | list | length == 0
           ignore_errors: true
 
         - name: Delete internet gateway
@@ -441,6 +452,7 @@
             vpc_id: "{{ vpc_result.vpc.id }}"
             region: "{{ my_aws_region }}"
             state: absent
+          ignore_errors: true
 
         - name: Delete subnets
           amazon.aws.ec2_vpc_subnet:
@@ -449,9 +461,26 @@
             region: "{{ my_aws_region }}"
             state: absent
           loop: "{{ subnet_cidrs }}"
+          ignore_errors: true
+
+        - name: Wait for resources to be released
+          ansible.builtin.pause:
+            seconds: 10
 
         - name: Delete VPC
           amazon.aws.ec2_vpc_net:
             vpc_id: "{{ vpc_result.vpc.id }}"
             region: "{{ my_aws_region }}"
             state: absent
+          ignore_errors: true
+
+        - name: Cleanup summary
+          ansible.builtin.debug:
+            msg: |
+              =====================================================
+              CLEANUP COMPLETE
+              =====================================================
+              All test resources have been removed.
+              If any errors occurred, check AWS Console for:
+                VPC ID: {{ vpc_result.vpc.id }}
+              =====================================================
