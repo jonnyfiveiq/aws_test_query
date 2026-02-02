@@ -3,4 +3,4 @@ collections:
   - name: https://github.com/jonnyfiveiq/amazon.aws.git
     type: git
     version: main
- 
+  - name: ansible.utils
